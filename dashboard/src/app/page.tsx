@@ -163,29 +163,29 @@ export default function Dashboard() {
   return (
     <div className="selection:bg-primary-container selection:text-on-primary-container min-h-screen text-on-surface">
       {/* Top Navigation */}
-      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-8 h-16 bg-slate-950/40 backdrop-blur-[20px] border-b border-white/10">
+      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-4 md:px-8 h-16 bg-slate-950/40 backdrop-blur-[20px] border-b border-white/10">
         <div className="flex items-center gap-4">
-          <span className="text-xl font-black text-cyan-400 drop-shadow-[0_0_10px_rgba(0,243,255,0.5)]">AETHER_OS</span>
-          <div className="h-4 w-px bg-white/20"></div>
-          <nav className="flex gap-8">
-            <span className="tracking-widest uppercase text-xs font-bold text-cyan-400 border-b-2 border-cyan-400 pb-1 cursor-default">DASHBOARD</span>
+          <span className="text-lg md:text-xl font-black text-cyan-400 drop-shadow-[0_0_10px_rgba(0,243,255,0.5)]">AETHER_OS</span>
+          <div className="hidden sm:block h-4 w-px bg-white/20"></div>
+          <nav className="hidden sm:flex gap-8">
+            <span className="tracking-widest uppercase text-[10px] md:text-xs font-bold text-cyan-400 border-b-2 border-cyan-400 pb-1 cursor-default">DASHBOARD</span>
           </nav>
         </div>
-        <div className="flex items-center gap-6">
-          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+        <div className="flex items-center gap-3 md:gap-6">
+          <div className={`flex items-center gap-2 px-2 md:px-3 py-1 rounded-full border ${
             realtimeStatus === 'online' ? 'bg-green-500/10 border-green-500/50 text-green-400' : 
             realtimeStatus === 'connecting' ? 'bg-amber-500/10 border-amber-500/50 text-amber-400' : 
             'bg-red-500/10 border-red-500/50 text-red-400'
           }`}>
-            <span className={`w-2 h-2 rounded-full ${realtimeStatus === 'online' ? 'bg-green-400 animate-pulse' : 'bg-current'}`}></span>
-            <span className="text-[10px] font-bold tracking-widest uppercase">{realtimeStatus}</span>
+            <span className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${realtimeStatus === 'online' ? 'bg-green-400 animate-pulse' : 'bg-current'}`}></span>
+            <span className="text-[9px] md:text-[10px] font-bold tracking-widest uppercase">{realtimeStatus}</span>
           </div>
-          <div className="w-8 h-8 rounded-full overflow-hidden border border-cyan-400/50 bg-slate-800"></div>
+          <div className="w-7 h-7 md:w-8 md:h-8 rounded-full overflow-hidden border border-cyan-400/50 bg-slate-800"></div>
         </div>
       </header>
 
-      {/* Side Navigation */}
-      <aside className="fixed left-0 top-16 bottom-0 z-40 flex flex-col items-center py-8 bg-slate-950/60 backdrop-blur-[40px] border-r border-white/10 w-20 hover:w-64 transition-all duration-500 group overflow-hidden">
+      {/* Desktop Side Navigation */}
+      <aside className="hidden md:flex fixed left-0 top-16 bottom-0 z-40 flex-col items-center py-8 bg-slate-950/60 backdrop-blur-[40px] border-r border-white/10 w-20 hover:w-64 transition-all duration-500 group overflow-hidden">
         <div className="flex flex-col items-center group-hover:items-start group-hover:px-6 w-full gap-2 mb-12">
           <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-400 active-glow">
             <span className="material-symbols-outlined">blur_on</span>
@@ -202,9 +202,16 @@ export default function Dashboard() {
         </nav>
       </aside>
 
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 left-0 w-full h-16 z-50 bg-slate-950/80 backdrop-blur-[20px] border-t border-white/10 flex justify-around items-center px-4">
+        <MobileNavItem icon="dashboard" label="HOME" active />
+        <MobileNavItem icon="sensors" label="SENSORS" />
+        <MobileNavItem icon="bolt" label="POWER" />
+      </nav>
+
       {/* Main Content */}
-      <main className="pl-20 pt-16">
-        <div className="p-8 flex flex-col gap-8 max-w-[1600px] mx-auto">
+      <main className="md:pl-20 pt-16 pb-20 md:pb-8">
+        <div className="p-4 md:p-8 flex flex-col gap-6 md:gap-8 max-w-[1600px] mx-auto">
           
           <div className="grid grid-cols-12 gap-6 items-end">
             <div className="col-span-12 lg:col-span-8">
@@ -214,7 +221,7 @@ export default function Dashboard() {
                    SYNC: {lastUpdateStr}
                  </div>
               </div>
-              <h1 className="text-3xl font-semibold text-on-surface uppercase tracking-tight">Environmental_OVR</h1>
+              <h1 className="text-2xl md:text-3xl font-semibold text-on-surface uppercase tracking-tight">Environmental_OVR</h1>
             </div>
             <div className="hidden lg:col-span-4 lg:flex justify-end pr-4">
               <div className="flex items-center gap-3 text-xs text-outline font-medium uppercase tracking-widest">
@@ -258,8 +265,8 @@ export default function Dashboard() {
 
           <div className="grid grid-cols-12 gap-6">
             <div className="col-span-12 xl:col-span-8">
-              <section className="glass-panel-heavy p-8 rounded-xl h-full flex flex-col min-h-[500px]">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+              <section className="glass-panel-heavy p-4 md:p-8 rounded-xl h-full flex flex-col min-h-[400px] md:min-h-[500px]">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 md:mb-8">
                   <div>
                     <h2 className="text-2xl font-medium text-primary uppercase tracking-tight">Trend_Analysis</h2>
                     <p className="text-[10px] text-outline tracking-wider uppercase">Multi-Sensor Overlay</p>
@@ -300,7 +307,7 @@ export default function Dashboard() {
             </div>
 
             <div className="col-span-12 xl:col-span-4">
-              <section className="glass-panel-heavy p-8 rounded-xl h-full flex flex-col min-h-[500px]">
+              <section className="glass-panel-heavy p-4 md:p-8 rounded-xl h-full flex flex-col min-h-[400px] md:min-h-[500px]">
                 <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-3">
                     <span className="material-symbols-outlined text-cyan-400">terminal</span>
@@ -356,6 +363,15 @@ function NavItem({ icon, label, active = false }: { icon: string, label: string,
     <div className={`flex items-center gap-4 p-3 rounded-lg transition-all cursor-pointer ${active ? 'bg-cyan-500/10 text-cyan-400 border-r-4 border-cyan-400' : 'text-slate-500 hover:bg-white/5 hover:text-cyan-200'}`}>
       <span className="material-symbols-outlined">{icon}</span>
       <span className="hidden group-hover:block text-[12px] font-medium tracking-widest">{label}</span>
+    </div>
+  );
+}
+
+function MobileNavItem({ icon, label, active = false }: { icon: string, label: string, active?: boolean }) {
+  return (
+    <div className={`flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${active ? 'text-cyan-400' : 'text-slate-500 hover:text-cyan-200'}`}>
+      <span className="material-symbols-outlined text-[24px]">{icon}</span>
+      <span className="text-[9px] font-bold tracking-widest">{label}</span>
     </div>
   );
 }
