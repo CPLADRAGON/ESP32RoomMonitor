@@ -29,11 +29,19 @@ interface Reading {
   trigger_source: string;
 }
 
+interface DeviceLog {
+  id: number;
+  created_at: string;
+  message: string;
+  level: string;
+}
+
 type Timeframe = 'day' | 'week' | 'month' | 'year';
 
 export default function Dashboard() {
   const [readings, setReadings] = useState<Reading[]>([]);
   const [latest, setLatest] = useState<Reading | null>(null);
+  const [logs, setLogs] = useState<DeviceLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeframe, setTimeframe] = useState<Timeframe>('day');
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
@@ -43,25 +51,41 @@ export default function Dashboard() {
   }, [timeframe]);
 
   useEffect(() => {
+    fetchLogs();
     const channel = supabase
-      .channel('room_readings_live')
+      .channel('live_updates')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'room_readings' }, (payload) => {
         const newReading = payload.new as Reading;
-        setReadings(prev => {
-          const updated = [...prev, newReading];
-          return updated.slice(-100); 
-        });
+        setReadings(prev => [...prev.slice(-99), newReading]);
         setLatest(newReading);
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'device_logs' }, (payload) => {
+        setLogs(prev => [payload.new as DeviceLog, ...prev].slice(0, 50));
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') setRealtimeStatus('online');
         else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') setRealtimeStatus('offline');
       });
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, []);
+
+  async function fetchLogs() {
+    const { data } = await supabase
+      .from('device_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (data) setLogs(data);
+  }
+
+  const formatSGTime = (dateStr: string) => {
+    return new Date(dateStr).toLocaleString('en-SG', { 
+      timeZone: 'Asia/Singapore',
+      hour12: false,
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+  };
 
   async function fetchReadings() {
     setLoading(true);
@@ -276,22 +300,49 @@ export default function Dashboard() {
             </div>
 
             <div className="col-span-12 xl:col-span-4">
-              <div className="glass-panel-heavy p-8 rounded-xl h-full flex flex-col relative overflow-hidden">
-                <div className="flex justify-between items-start mb-6">
-                  <div><h2 className="text-2xl font-medium text-primary uppercase tracking-tight">Digital_Twin</h2><p className="text-[10px] text-outline tracking-wider uppercase">Active Volumetric Model</p></div>
-                  <span className="material-symbols-outlined text-cyan-400 animate-pulse">deployed_code</span>
-                </div>
-                <div className="flex-grow flex items-center justify-center py-12 relative">
-                  <div className="absolute w-48 h-48 bg-cyan-500/10 blur-[100px] rounded-full"></div>
-                  <div className="relative w-full aspect-square max-w-[280px] flex items-center justify-center">
-                    <span className="material-symbols-outlined text-8xl text-cyan-400/20 rotate-12">room</span>
+              <section className="glass-panel-heavy p-8 rounded-xl h-full flex flex-col min-h-[500px]">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-cyan-400">terminal</span>
+                    <h2 className="text-xl font-medium text-primary uppercase tracking-tight">System_Logs</h2>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-cyan-400/50 font-mono tracking-tighter">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                    SG_TIME
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-auto">
-                  <StatusItem label="MOTION" value={latest?.accel_total && latest.accel_total > 11 ? 'DETECTED' : 'STILL'} active={!!(latest?.accel_total && latest.accel_total > 11)} />
-                  <StatusItem label="BATTERY" value={latest ? `${latest.battery_v.toFixed(2)}V` : '--'} />
+                
+                <div className="bg-black/40 rounded-lg p-4 font-mono text-[10px] flex-grow overflow-y-auto flex flex-col gap-3 border border-white/5 custom-scrollbar max-h-[420px]">
+                  {logs.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30 italic">
+                      <span className="material-symbols-outlined animate-spin">sync</span>
+                      <p>Awaiting Uplink...</p>
+                    </div>
+                  )}
+                  {logs.map((log) => (
+                    <div key={log.id} className="flex flex-col gap-1 border-l-2 border-cyan-500/10 pl-3 hover:border-cyan-400/30 transition-colors py-0.5">
+                      <div className="flex justify-between items-center opacity-40">
+                        <span>[{formatSGTime(log.created_at)}]</span>
+                        <span className={`font-bold ${log.level === 'ERROR' ? 'text-red-400' : 'text-cyan-400'}`}>
+                          {log.level}
+                        </span>
+                      </div>
+                      <span className="text-slate-300 leading-relaxed font-light">{log.message}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
+
+                <div className="mt-4 pt-4 border-t border-white/5 grid grid-cols-2 gap-4">
+                  <div className="p-2 bg-slate-900/50 rounded border border-white/5">
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Last Sync</p>
+                    <p className="text-[10px] text-cyan-400 font-mono">{logs[0] ? formatSGTime(logs[0].created_at) : '--:--:--'}</p>
+                  </div>
+                  <div className="p-2 bg-slate-900/50 rounded border border-white/5">
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest mb-1">Log Count</p>
+                    <p className="text-[10px] text-cyan-400 font-mono">{logs.length} entries</p>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </div>
