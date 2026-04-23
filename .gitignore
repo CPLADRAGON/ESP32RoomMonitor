@@ -1,0 +1,28 @@
+# PlatformIO
+.pio/
+.platformio/
+.pioenvs/
+.piolibdeps/
+.clang-format
+.vscode/
+
+# Next.js
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/build/
+
+# Secrets
+.env
+*.local
+firmware/include/secrets.h
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
