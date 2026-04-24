@@ -73,7 +73,9 @@ void sendLog(String msg, String level = "INFO") {
 void updateOLED(String line1, String line2, String line3) {
   if (!oledFound) return;
   display.clearDisplay();
-  display.drawRect(OLED_OFFSET, 0, 64, 48, SSD1306_WHITE);
+  // The physical screen is 64x48 but mapped to the center of 128x64 RAM.
+  // We must draw starting at OLED_OFFSET (32)
+  display.drawRoundRect(OLED_OFFSET, 0, 64, 48, 2, SSD1306_WHITE);
   display.setCursor(OLED_OFFSET + 4, 4); display.print(line1);
   display.setCursor(OLED_OFFSET + 4, 18); display.print(line2);
   display.setCursor(OLED_OFFSET + 4, 32); display.print(line3);
@@ -113,19 +115,43 @@ void monitorTask(void *pvParameters) {
   mpuFound = mpu.begin();
 
   // WiFi Connection
+  Serial.println("[WIFI] Connecting to " + String(WIFI_SSID) + "...");
   updateOLED("WiFi", "Connecting", WIFI_SSID);
+  // Simple WiFi connection (how it was originally)
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Bypass DHCP if a static IP is defined in secrets.h
+  if (local_IP[0] != 0) {
+    if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, IPAddress(8, 8, 4, 4))) {
+      Serial.println("[WIFI] Static IP configuration failed!");
+    } else {
+      Serial.println("[WIFI] Using Static IP: " + local_IP.toString());
+    }
+  }
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
     setLED(0, 50, 50); vTaskDelay(250 / portTICK_PERIOD_MS);
     setLED(0, 0, 0); vTaskDelay(250 / portTICK_PERIOD_MS);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("[WIFI] Connected! IP: " + WiFi.localIP().toString());
+    Serial.println("[WIFI] Signal Strength (RSSI): " + String(WiFi.RSSI()) + " dBm");
     sendLog("Device Wakeup [" + trigger + "]", "INFO");
     sendLog(oledFound ? "OLED Screen: DETECTED" : "OLED Screen: NOT FOUND", oledFound ? "INFO" : "WARN");
     sendLog(mpuFound ? "Motion Sensor: DETECTED" : "Motion Sensor: NOT FOUND", mpuFound ? "INFO" : "WARN");
     updateOLED("WiFi", "Connected", WiFi.localIP().toString());
+  } else {
+    int status = WiFi.status();
+    String reason = "Code: " + String(status);
+    if (status == 1) reason = "NO SSID FOUND";
+    else if (status == 4) reason = "AUTH/PASSWORD FAIL";
+    else if (status == 6) reason = "DISCONNECTED (DHCP FAIL)";
+    
+    Serial.println("[WIFI] Failed to connect. Reason: " + reason);
+    updateOLED("WiFi FAILED", reason, "Check App Logs");
   }
 
   float totalT = 0, totalH = 0, totalA = 0;
@@ -149,8 +175,11 @@ void monitorTask(void *pvParameters) {
       totalT += t; totalH += h; totalL += l; totalA += acc;
       validCount++;
       String dataStr = "T:" + String(t,1) + "C H:" + String(h,0) + "% L:" + String(l);
+      Serial.println("[SENSOR] Sample " + String(i+1) + "/5 -> " + dataStr);
       sendLog("Sample [" + String(i+1) + "/5]: " + dataStr, "INFO");
-      updateOLED("SAMP " + String(i+1) + "/5", String(t, 1) + " C", String(h, 0) + " %");
+      updateOLED("SAMP " + String(i+1) + "/5", "T:" + String(t, 1) + "C", "H:" + String(h, 0) + "% L:" + String(l));
+    } else {
+      Serial.println("[SENSOR] Failed to read from DHT sensor!");
     }
     vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
@@ -161,6 +190,7 @@ void monitorTask(void *pvParameters) {
     int avgL = totalL / validCount;
     float avgA = totalA / validCount;
 
+    Serial.println("[CLOUD] Uploading data to Supabase...");
     updateOLED("CLOUD", "UPLOADING", "...");
     WiFiClientSecure client;
     client.setInsecure();
@@ -175,11 +205,13 @@ void monitorTask(void *pvParameters) {
       doc["accel_total"] = avgA; doc["trigger_source"] = trigger; doc["battery_v"] = 3.3;
       String body; serializeJson(doc, body);
       int code = http.POST(body);
+      Serial.println("[CLOUD] Sync Response: " + String(code));
       sendLog("Cloud Data Sync Response: " + String(code), (code >= 200 && code < 300) ? "SUCCESS" : "ERROR");
       http.end();
     }
   }
 
+  Serial.println("[SYSTEM] Sequence Complete. Deep Sleep starting...");
   sendLog("Sequence Complete. Deep Sleep starting.", "INFO");
   updateOLED("DONE!", "Sleeping", "Zzz...");
   vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -195,6 +227,14 @@ void monitorTask(void *pvParameters) {
 
   esp_sleep_enable_timer_wakeup(SLEEP_TIME_SEC * 1000000ULL);
   esp_sleep_enable_ext0_wakeup(BUTTON_PIN, 0);
+  
+  // Gracefully disconnect from Wi-Fi to prevent router bans
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.disconnect(true, true); // True = erase AP info, True = power off radio
+    delay(100);
+  }
+  WiFi.mode(WIFI_OFF);
+  
   esp_deep_sleep_start();
 }
 
@@ -205,6 +245,9 @@ void setup() {
   ledcSetup(RED_CH, 5000, 8); ledcAttachPin(RED_PIN, RED_CH);
   ledcSetup(GREEN_CH, 5000, 8); ledcAttachPin(GREEN_PIN, GREEN_CH);
   ledcSetup(BLUE_CH, 5000, 8); ledcAttachPin(BLUE_PIN, BLUE_CH);
+
+  pinMode(LDR_PIN, INPUT);
+  analogRead(LDR_PIN); // Dummy read to stabilize ADC
 
   xTaskCreatePinnedToCore(monitorTask, "MonitorTask", 16384, NULL, 1, NULL, 1);
 }
