@@ -26,7 +26,8 @@
 // --- OLED Config ---
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-#define OLED_OFFSET 32
+#define OLED_OFFSET_X 32
+#define OLED_OFFSET_Y 16
 // Using -1 for reset to prevent hardware hang
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
@@ -124,19 +125,40 @@ void flushLogs() {
   queuedLogCount = 0;
 }
 
-void updateOLED(String line1, String line2, String line3) {
+void updateOLED(String line1, String line2, String line3, String line4 = "") {
   if (!oledFound)
     return;
   display.clearDisplay();
-  // The physical screen is 64x48 but mapped to the center of 128x64 RAM.
-  // We must draw starting at OLED_OFFSET (32)
-  display.drawRoundRect(OLED_OFFSET, 0, 64, 48, 2, SSD1306_WHITE);
-  display.setCursor(OLED_OFFSET + 4, 4);
+  
+  // Sleek UI: Solid white header bar for the title
+  display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, 64, 13, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK); // Inverse text for header
+  display.setTextSize(1);
+  
+  // Center-ish the header text
+  display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 2);
   display.print(line1);
-  display.setCursor(OLED_OFFSET + 4, 18);
-  display.print(line2);
-  display.setCursor(OLED_OFFSET + 4, 32);
-  display.print(line3);
+  
+  // Main Content box
+  display.setTextColor(SSD1306_WHITE);
+  display.drawRect(OLED_OFFSET_X, OLED_OFFSET_Y + 13, 64, 35, SSD1306_WHITE);
+  
+  if (line4 != "") {
+    // 3 lines of content (tightly packed to fill space)
+    display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 16);
+    display.print(line2);
+    display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 26);
+    display.print(line3);
+    display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 36);
+    display.print(line4);
+  } else {
+    // 2 lines of content (spaced out)
+    display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 19);
+    display.print(line2);
+    display.setCursor(OLED_OFFSET_X + 3, OLED_OFFSET_Y + 33);
+    display.print(line3);
+  }
+  
   display.display();
 }
 
@@ -152,15 +174,11 @@ void monitorTask(void *pvParameters) {
   // Try 0x3C and then 0x3D for OLED
   if (display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     oledFound = true;
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    updateOLED("AETHER", "LINKED", "0x3C");
+    updateOLED("BOOT", "AETHER", "OS v2");
     Serial.println("[OLED] Found at 0x3C");
   } else if (display.begin(SSD1306_SWITCHCAPVCC, 0x3D)) {
     oledFound = true;
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    updateOLED("AETHER", "LINKED", "0x3D");
+    updateOLED("BOOT", "AETHER", "OS v2");
     Serial.println("[OLED] Found at 0x3D");
   } else {
     Serial.println("[OLED] Display NOT FOUND on I2C bus.");
@@ -175,7 +193,7 @@ void monitorTask(void *pvParameters) {
 
   // WiFi Connection
   Serial.println("[WIFI] Connecting to " + String(WIFI_SSID) + "...");
-  updateOLED("WiFi", "Connecting", WIFI_SSID);
+  updateOLED("WIFI", "Scanning", "Network");
   // Simple WiFi connection (how it was originally)
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -211,21 +229,21 @@ void monitorTask(void *pvParameters) {
             oledFound ? "INFO" : "WARN");
     sendLog(mpuFound ? "Motion Sensor: DETECTED" : "Motion Sensor: NOT FOUND",
             mpuFound ? "INFO" : "WARN");
-    updateOLED("WiFi", "Connected", WiFi.localIP().toString());
+    updateOLED("WIFI", "Online!", WiFi.localIP().toString());
     vTaskDelay(1500 /
                portTICK_PERIOD_MS); // Hold the Connected screen for 1.5 seconds
   } else {
     int status = WiFi.status();
     String reason = "Code: " + String(status);
     if (status == 1)
-      reason = "NO SSID FOUND";
+      reason = "NO SSID";
     else if (status == 4)
-      reason = "AUTH/PASSWORD FAIL";
+      reason = "BAD PASS";
     else if (status == 6)
-      reason = "DISCONNECTED (DHCP FAIL)";
+      reason = "DHCP FAIL";
 
     Serial.println("[WIFI] Failed to connect. Reason: " + reason);
-    updateOLED("WiFi FAILED", reason, "Check App Logs");
+    updateOLED("ERROR", "Wi-Fi", reason);
   }
 
   float totalT = 0, totalH = 0, totalA = 0;
@@ -256,8 +274,8 @@ void monitorTask(void *pvParameters) {
           "T:" + String(t, 1) + "C H:" + String(h, 0) + "% L:" + String(l);
       Serial.println("[SENSOR] Sample " + String(i + 1) + "/5 -> " + dataStr);
       sendLog("Sample [" + String(i + 1) + "/5]: " + dataStr, "INFO");
-      updateOLED("SAMP " + String(i + 1) + "/5", "T:" + String(t, 1) + "C",
-                 "H:" + String(h, 0) + "% L:" + String(l));
+      updateOLED("DATA " + String(i + 1) + "/5", "T: " + String(t, 1) + " C",
+                 "H: " + String(h, 0) + "%", "LDR: " + String(l));
     } else {
       Serial.println("[SENSOR] Failed to read from DHT sensor!");
     }
@@ -272,7 +290,7 @@ void monitorTask(void *pvParameters) {
 
     if (WiFi.status() == WL_CONNECTED) {
       Serial.println("[CLOUD] Uploading data to Supabase...");
-      updateOLED("CLOUD", "UPLOADING", "...");
+      updateOLED("SYNC", "Cloud", "Upload...");
       WiFiClientSecure client;
       client.setInsecure();
       HTTPClient http;
@@ -339,7 +357,7 @@ void monitorTask(void *pvParameters) {
         cachedCount++;
         Serial.println("[CACHE] Reading saved offline. Total cached: " +
                        String(cachedCount));
-        updateOLED("OFFLINE", "Data Saved", "To Cache");
+        updateOLED("OFFLINE", "No Net!", "Caching.");
       } else {
         Serial.println("[CACHE] Cache is full! Dropping reading.");
       }
@@ -348,7 +366,7 @@ void monitorTask(void *pvParameters) {
 
   Serial.println("[SYSTEM] Sequence Complete. Deep Sleep starting...");
   sendLog("Sequence Complete. Deep Sleep starting.", "INFO");
-  updateOLED("DONE!", "Sleeping", "Zzz...");
+  updateOLED("SLEEP", "Goodnight", "Zzzz...");
 
   flushLogs(); // Send the bulk logs array
 
