@@ -114,9 +114,9 @@ enum MenuPage { PAGE_MEASURE, PAGE_TIME, PAGE_WEATHER, PAGE_LOCATE, PAGE_STATS, 
 const char* menuItems[] = {"MEASURE", "CLOCK", "WEATHER", "LOCATE", "STATS", "WIFI CFG", "RESET", "SLEEP"};
 const int TOTAL_MENU_ITEMS = 8;
 
-enum WiFiMenuPage { WF_PROVISION, WF_VIEW, WF_PRIORITY, WF_DELETE, WF_BACK };
-const char* wifiMenuItems[] = {"SETUP AP", "SAVED CFG", "MODE: AUTO", "DELETE", "BACK"};
-const int TOTAL_WIFI_MENU_ITEMS = 5;
+enum WiFiMenuPage { WF_PORTAL, WF_SELECT, WF_CLEAR, WF_BACK };
+const char* wifiMenuItems[] = {"PORTAL", "SET TARGET", "CLEAR", "BACK"};
+const int TOTAL_WIFI_MENU_ITEMS = 4;
 int currentWiFiMenuIndex = 0;
 int wifiPriority = 0; // 0: Auto (Cycle 5), 1: Fixed (Selected Slot Only)
 const char* prioLabels[] = {"AUTO", "FIXED"};
@@ -335,24 +335,33 @@ bool validateIPReady() {
   return false;
 }
 
-bool tryConnect(const char* ssid_in, const char* pass_in) {
-  String sStr = String(ssid_in); sStr.trim();
-  String pStr = String(pass_in); pStr.trim();
-  if (sStr.length() == 0) return false;
-
-  // 1. Hard Reset Radio
-  WiFi.disconnect(true);
-  vTaskDelay(100 / portTICK_PERIOD_MS);
+// Return codes: 0=OK, 1=UserAbort, 2=NoSSID, 3=AuthFail, 4=Timeout
+int tryConnect(const char* ssid, const char* pass) {
+  String sStr = String(ssid); sStr.trim();
+  String pStr = String(pass); pStr.trim();
+  if (sStr.length() == 0) return 4;
   
-  Serial.printf("[WIFI] Target: %s\n", sStr.c_str());
-  updateOLED("WIFI", "JOINING", sStr.substring(0, 9));
+  if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(100))) {
+    display.clearDisplay();
+    display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+    display.setCursor(OLED_OFFSET_X + 2, OLED_OFFSET_Y + 1);
+    display.print("CONNECTING");
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(OLED_OFFSET_X + 2, OLED_OFFSET_Y + 14);
+    display.print(sStr.substring(0,9));
+    display.display();
+    xSemaphoreGive(displayMutex);
+  }
 
+  WiFi.disconnect();
+  vTaskDelay(200 / portTICK_PERIOD_MS);
+  
   bool snapshotValid = loadWiFiSnapshot();
   bool isFastTrackSSID = (snapshotValid && sStr == String(currentSnapshot.ssid));
   bool attemptFast = isFastTrackSSID;
 
   if (attemptFast) {
-    Serial.println("[WIFI] Attempting Fast-Track Association...");
     WiFi.config(IPAddress(currentSnapshot.ip), IPAddress(currentSnapshot.gateway), 
                 IPAddress(currentSnapshot.subnet), IPAddress(currentSnapshot.dns));
     WiFi.begin(sStr.c_str(), pStr.c_str(), currentSnapshot.channel, currentSnapshot.bssid);
@@ -364,90 +373,98 @@ bool tryConnect(const char* ssid_in, const char* pass_in) {
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-  // 2. Polling loop with internal fallback
+  Serial.printf("[WIFI] Target: %s\n", sStr.c_str());
+  uiLine2 = sStr.substring(0,10); // Show on OLED via uiTask spinner
+  
   for (int i = 0; i < 100; i++) {
-    if (WiFi.status() == WL_CONNECTED) {
+    if (buttonEvent) {
+      buttonEvent = false;
+      Serial.println("[WIFI] Aborted.");
+      return 1;
+    }
+
+    wl_status_t status = WiFi.status();
+    if (status == WL_CONNECTED) {
       Serial.printf("[WIFI] Linked in %dms!\n", i * 100);
-      return true;
+      // Save for Memory-Link (Fast-Reconnect)
+      preferences.begin("aether", false);
+      preferences.putString("lastS", sStr);
+      preferences.putString("lastP", pStr);
+      preferences.end();
+      saveWiFiSnapshot();
+      return 0;
     }
     
-    // If Fast-Track fails after 1.5 seconds, immediately fall back to Safe-Mode (DHCP) for the SAME SSID
-    if (attemptFast && i == 15) {
-      Serial.println("[WIFI] Fast-Track timed out, falling back to Safe Mode...");
+    if (i > 15 && attemptFast) {
       WiFi.disconnect(true);
       vTaskDelay(50 / portTICK_PERIOD_MS);
       WiFi.config(IPAddress(0,0,0,0), IPAddress(0,0,0,0), IPAddress(0,0,0,0));
       WiFi.begin(sStr.c_str(), pStr.c_str());
-      attemptFast = false; // Prevent re-triggering fallback
+      attemptFast = false;
     }
 
-    if (i > 60 && (WiFi.status() == WL_NO_SSID_AVAIL || WiFi.status() == WL_CONNECT_FAILED)) break;
+    if (i > 60) {
+      if (status == WL_NO_SSID_AVAIL) return 2;
+      if (status == WL_CONNECT_FAILED) return 3;
+    }
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 
   WiFi.disconnect();
-  return false;
+  return 4; // Timeout
 }
 
-bool ensureWiFi(bool showConnected = true) {
-  if (WiFi.status() == WL_CONNECTED && validateIPReady()) return true;
+bool ensureWiFi(bool force = false) {
+  if (!force && WiFi.status() == WL_CONNECTED) return true;
+  
+  currentState = SS_CONNECTING;
+  uiLine1 = "WIFI..."; uiLine2 = ""; uiLine3 = ""; 
   
   preferences.begin("aether", true);
-  wifiPriority = preferences.getInt("wifiPrio", 0);
+  int primarySlot = preferences.getInt("primSlot", 1);
   preferences.end();
 
-  currentState = SS_CONNECTING;
-  uiLine1 = ""; uiLine2 = ""; uiLine3 = ""; 
-  bool connected = false;
-  
-  // Read credentials
-  String slots[5][2];
-  int slotCount = 0;
   preferences.begin("aether_wifi", true);
-  if (wifiPriority == 0) {
+  String s = preferences.getString(("s" + String(primarySlot)).c_str(), "");
+  String p = preferences.getString(("p" + String(primarySlot)).c_str(), "");
+  preferences.end();
+
+  int res = 4;
+  if (s.length() == 0) {
     for (int i = 1; i <= 5; i++) {
-      String sKey = "s" + String(i);
-      if (preferences.isKey(sKey.c_str())) {
-        slots[slotCount][0] = preferences.getString(sKey.c_str(), "");
-        slots[slotCount][1] = preferences.getString(("p" + String(i)).c_str(), "");
-        slotCount++;
+      if (buttonEvent) { buttonEvent = false; break; }
+      preferences.begin("aether_wifi", true);
+      s = preferences.getString(("s" + String(i)).c_str(), "");
+      p = preferences.getString(("p" + String(i)).c_str(), "");
+      preferences.end();
+      if (s.length() > 0) {
+        res = tryConnect(s.c_str(), p.c_str());
+        if (res == 0) {
+          if (validateIPReady()) return true;
+        }
+        if (res == 1) break;
       }
     }
   } else {
-    slots[0][0] = preferences.getString("s1", "");
-    slots[0][1] = preferences.getString("p1", "");
-    slotCount = 1;
-  }
-  preferences.end();
-  
-  WiFi.mode(WIFI_STA);
-  for (int round = 0; round < 3 && !connected; round++) {
-    for (int i = 0; i < slotCount && !connected; i++) {
-      if (tryConnect(slots[i][0].c_str(), slots[i][1].c_str())) {
-        if (validateIPReady()) {
-          connected = true;
-        } else {
-          Serial.println("[WIFI] Post-connect validation failed (Stale Segment).");
-          // tryConnect already attempted DHCP fallback if it was the fast-track SSID,
-          // but if we got here, it means we have a radio link but no internet.
-        }
-      }
+    res = tryConnect(s.c_str(), p.c_str());
+    if (res == 0) {
+      if (validateIPReady()) return true;
     }
   }
 
-  currentState = SS_MENU;
-  if (connected) {
-    if (showConnected) {
-      updateOLED("WIFI", "READY", WiFi.localIP().toString());
-      vTaskDelay(800 / portTICK_PERIOD_MS); 
-    }
-    return true;
+  // Handle Errors Verbously
+  currentState = SS_MENU; 
+  if (res != 0 && res != 1) {
+    String err = "TIMEOUT";
+    if (res == 2) err = "NO SIGNAL";
+    if (res == 3) err = "AUTH FAIL";
+    updateOLED("WIFI", "FAILED", err, "TRY AGAIN");
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
   }
-  
-  updateOLED("WIFI", "FAILED", "CHECK PORTAL");
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
   return false;
 }
+
+
 
 void runWiFiPortal() {
   Serial.println("[PORTAL] Starting WiFi Configuration Portal...");
@@ -557,9 +574,14 @@ void runWiFiPortal() {
 
 void showSavedWiFi() {
   int currentSlot = 1;
-  int viewMode = 0; // 0: List/SSID, 1: Details
+  int viewMode = 0; // 0: SSID List, 1: Password View
   lastInteractionTime = millis();
   
+  // Load current Primary for indicator
+  preferences.begin("aether", true);
+  int primSlot = preferences.getInt("primSlot", 1);
+  preferences.end();
+
   while (millis() - lastInteractionTime < 20000) {
     preferences.begin("aether_wifi", true);
     String sKey = "s" + String(currentSlot);
@@ -578,7 +600,10 @@ void showSavedWiFi() {
       display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
       display.setTextColor(SSD1306_BLACK);
       display.setCursor(OLED_OFFSET_X + 2, OLED_OFFSET_Y + 1);
-      display.print("PROFILES " + String(currentSlot) + "/5");
+      
+      String head = "SLOT " + String(currentSlot);
+      if (currentSlot == primSlot) head += " [*]";
+      display.print(head);
       
       display.setTextColor(SSD1306_WHITE);
       if (viewMode == 0) {
@@ -587,7 +612,7 @@ void showSavedWiFi() {
         display.setCursor(OLED_OFFSET_X + 0, OLED_OFFSET_Y + 24);
         display.print(s.substring(0, 9));
         display.setCursor(OLED_OFFSET_X + 0, OLED_OFFSET_Y + 38);
-        display.print("[HOLD] DET");
+        display.print("[HOLD] SET");
       } else {
         display.setCursor(OLED_OFFSET_X + 0, OLED_OFFSET_Y + 14);
         display.print("P:" + p.substring(0, 9));
@@ -601,8 +626,14 @@ void showSavedWiFi() {
     if (isPressing && (millis() - isrPressStart > LONG_PRESS_MS)) {
       if (!longPressTriggered) {
         longPressTriggered = true;
-        if (viewMode == 0) viewMode = 1;
-        lastInteractionTime = millis();
+        // SET AS PRIMARY
+        preferences.begin("aether", false);
+        preferences.putInt("primSlot", currentSlot);
+        preferences.end();
+        primSlot = currentSlot; // Update indicator
+        updateOLED("WIFI", "PRIMARY", "SET TO", "SLOT " + String(currentSlot));
+        vTaskDelay(1200 / portTICK_PERIOD_MS);
+        break; 
       }
     }
     
@@ -612,7 +643,7 @@ void showSavedWiFi() {
         viewMode = 0;
       } else {
         currentSlot++;
-        if (currentSlot > 5) break; // Exit after slot 5
+        if (currentSlot > 5) currentSlot = 1;
       }
       lastInteractionTime = millis();
     }
@@ -800,6 +831,8 @@ void runMeasurementFlow(String trigger) {
     
     currentState = SS_SYNCING;
     uiLine1 = "SYNCING...";
+    Serial.printf("[SYSTEM] Free Heap: %d bytes\n", ESP.getFreeHeap());
+
     
     WiFiClientSecure client; client.setInsecure();
     HTTPClient http;
@@ -907,12 +940,7 @@ void drawMenu() {
         }
         display.setCursor(OLED_OFFSET_X + 2, y);
         
-        if (idx == WF_PRIORITY) {
-          display.print("M:");
-          display.print(prioLabels[wifiPriority]);
-        } else {
-          display.print(wifiMenuItems[idx]);
-        }
+        display.print(wifiMenuItems[idx]);
       }
     } else {
       int startItem = currentMenuIndex - (VISIBLE_MENU_ITEMS / 2);
@@ -1045,15 +1073,9 @@ void monitorTask(void *pvParameters) {
           else if (currentMenuIndex == PAGE_RESET) runResetStats();
           else if (currentMenuIndex == PAGE_SLEEP) enterDeepSleep();
         } else if (currentState == SS_WIFI_MENU) {
-          if (currentWiFiMenuIndex == WF_PROVISION) runWiFiPortal();
-          else if (currentWiFiMenuIndex == WF_VIEW) showSavedWiFi();
-          else if (currentWiFiMenuIndex == WF_PRIORITY) {
-            wifiPriority = (wifiPriority + 1) % 2;
-            preferences.begin("aether", false);
-            preferences.putInt("wifiPrio", wifiPriority);
-            preferences.end();
-          }
-          else if (currentWiFiMenuIndex == WF_DELETE) deleteSavedWiFi();
+          if (currentWiFiMenuIndex == WF_PORTAL) runWiFiPortal();
+          else if (currentWiFiMenuIndex == WF_SELECT) showSavedWiFi();
+          else if (currentWiFiMenuIndex == WF_CLEAR) deleteSavedWiFi();
           else if (currentWiFiMenuIndex == WF_BACK) currentState = SS_MENU;
         }
         lastInteractionTime = millis();
@@ -1089,7 +1111,7 @@ void setup() {
   ledcSetup(BLUE_CH, 5000, 8); ledcAttachPin(BLUE_PIN, BLUE_CH);
   
   xTaskCreatePinnedToCore(uiTask, "UI", 4096, NULL, 1, NULL, 1); 
-  // Increased stack to 32KB and priority to 2 to handle SSL and WiFi events reliably
-  xTaskCreatePinnedToCore(monitorTask, "Monitor", 32768, NULL, 2, NULL, 1); 
+  // Lowered to 12KB to save heap for SSL (Supabase)
+  xTaskCreatePinnedToCore(monitorTask, "Monitor", 12288, NULL, 2, NULL, 1); 
 }
 void loop() {}
