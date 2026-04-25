@@ -1,98 +1,85 @@
-<<<<<<< HEAD
-# AETHER_OS | Next-Gen ESP32 Room Monitor
+# AETHER_OS: Advanced Environmental Telemetry & Habitability Engine
 
-![AETHER_OS Dashboard](aether_dashboard_mockup_1776949127502.png)
+A high-performance, dual-core embedded system for real-time environmental monitoring and cloud-synchronized data visualization. AETHER_OS leverages the ESP32 architecture to deliver a "Liquid UI" experience alongside robust data telemetry to a Supabase-backed Digital Twin dashboard.
 
-**AETHER_OS** is a high-performance, energy-efficient "Digital Twin" IoT monitoring system. Built on a FreeRTOS-driven ESP32 firmware and a modern Next.js dashboard, it provides real-time environmental telemetry with professional-grade analytics and remote system logging.
+![AETHER_OS UI Philosophy](docs/pics/aether_ui_design_philosophy.png)
 
-## 🚀 Core Features
+## System Architecture
 
-### 📡 Intelligent Firmware (v2.1)
-- **FreeRTOS Architecture**: Multithreaded execution on Core 1 for stable concurrent operations.
-- **Deep Sleep Optimization**: Advanced power management with 5-minute cycles and manual wake-up support (GPIO 33).
-- **Multi-Sensor Array**: Precision sampling from DHT11 (Temp/Hum), MPU6050 (Motion), and LDR (Light).
-- **Dynamic OLED UI**: 0.66" SSD1306 display featuring a hardware reset sequence and real-time status framing.
-- **Creative Visuals**: Multi-color LED "Life Cycle" indicators (Pulse Blue for Wake, Rainbow for Sampling, Cyan for WiFi).
+AETHER_OS utilizes a distributed computing model to ensure UI responsiveness never compromises sensor precision or network reliability.
 
-### 📊 Professional Dashboard
-- **Real-time Synchronization**: Built with Next.js and Supabase for sub-second data updates.
-- **Trend Analysis**: Interactive multi-sensor charts with timeframe toggling (24H, 7D, 30D, 1Y).
-- **Singapore-Local Terminal**: A live "System Log" terminal showing raw data collection steps with UTC+8 timestamps.
-- **Glassmorphism UI**: A premium, dark-mode design optimized for both desktop and mobile command centers.
+### Dual-Core Processing Logic
+The firmware is partitioned into two distinct execution environments:
 
-## 🛠️ Hardware Architecture
+1.  **The Painter Core (Core 0)**: Dedicated to the "Liquid UI" engine. It manages high-frequency display updates, mechanical animations (rotating spinners, pulsing icons), and the SSD1306 OLED interface. By isolating the UI on its own core, the interface remains smooth even during blocking network operations.
+2.  **The Worker Core (Core 1)**: Handles the heavy-duty telemetry tasks. This includes I2C sensor sampling (BME280/AHT20), WiFi handshaking, NTP time synchronization, and secure HTTP POST requests to the Supabase Edge functions.
 
-![Hardware Render](aether_hardware_render_1776949108424.png)
+![Digital Twin Concept](docs/pics/aether_digital_twin_concept.png)
 
-| Component | Pin (ESP32) | Role |
-| :--- | :--- | :--- |
-| **DHT11** | GPIO 4 | Temperature & Humidity |
-| **LDR** | GPIO 34 | Ambient Light Sensing |
-| **MPU6050** | GPIO 21/22 | 6-Axis Motion Detection |
-| **OLED (SSD1306)** | I2C + GPIO 16 | System UI & Local Debug |
-| **RGB LED** | GPIO 13, 14, 27 | Visual Status Feedback |
-| **Manual Trigger** | GPIO 33 | Instant Data Uplink |
+## Core Functional Modules
 
-## 🏗️ Technical Stack
-- **Firmware**: C++ / Arduino Framework / FreeRTOS (PlatformIO)
-- **Frontend**: Next.js 14 / Tailwind CSS / Recharts / Framer Motion
-- **Backend**: Supabase (PostgreSQL + Realtime Engine)
-- **Communication**: Secure WiFi Client (TLS/SSL) via HTTPS REST API
+### 1. Environmental Intelligence
+The system continuously monitors ambient conditions with high precision.
+- **Sensor Fusion**: Multi-stage sampling to filter out transient noise.
+- **Meteorological Tracking**: Real-time integration with OpenWeatherMap API to provide local context (Condition, Outside Temp, Humidity).
+- **Temporal Engine**: Precision NTP synchronization configured for SGP pools, maintaining a sub-second accurate digital clock.
 
-## 📖 Deployment Guide
+### 2. Neural Sync (Cloud Integration)
+Data is pushed to a high-availability Supabase backend via a RESTful API.
+- **Telemetry Bursts**: Samples are packaged into JSON payloads for efficient cloud ingestion.
+- **Location Awareness**: Automatic IP-based geolocation to anchor data points to specific geographic regions (Singapore).
+- **Status Persistence**: Tracks system health metrics including boot counts and uptime.
 
-### Firmware Setup
-1. Open the `firmware/` folder in VS Code with PlatformIO.
-2. Update `secrets.h` with your WiFi and Supabase credentials.
-3. Flash to ESP32: `pio run -t upload`.
+![UI States Showcase](docs/pics/aether_ui_states_showcase.png)
 
-### Dashboard Setup
-1. Navigate to the `dashboard/` folder.
-2. Install dependencies: `npm install`.
-3. Set environment variables:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your_url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_key
-   ```
-4. Run locally: `npm run dev`.
+### 3. Liquid UI Interface
+Designed for the 0.66" OLED display (64x48 resolution), the UI features several specialized modes:
+- **Main Command**: Interactive menu for selecting active modules.
+- **Clock Mode**: High-contrast digital readout with date and day tracking.
+- **Weather Dashboard**: Comprehensive outdoor atmospheric report.
+- **System Telemetry**: Deep-dive into device performance and sync history.
+
+## Digital Twin Dashboard
+
+The project includes a full-stack Next.js web application that visualizes telemetry data in a premium, glassmorphism-inspired interface.
+
+![AETHER_OS Dashboard](docs/pics/dashboard_screenshot.png)
+
+### Dashboard Features
+- **Real-Time Visualization**: Instant updates as data flows from the hardware.
+- **Historical Trending**: Interactive charts showing temperature and humidity fluctuations over time.
+- **Responsive Layout**: Optimized for both high-resolution desktop monitors and mobile devices.
+- **Global Context**: Integrated weather and location tracking for comprehensive environmental analysis.
+
+## Technical Specifications
+
+- **Hardware**: ESP32 Dual-Core MCU (240MHz)
+- **Sensors**: BME280 (Pressure, Temp, Humidity) / AHT20
+- **Display**: 0.66" SSD1306 OLED (I2C)
+- **Backend**: Supabase (PostgreSQL + Edge Functions)
+- **Frontend**: Next.js 14, Tailwind CSS, Framer Motion
+- **Time Sync**: SNTP (sg.pool.ntp.org)
 
 ---
-*Developed for a stable, high-performance "Digital Twin" experience.*
-=======
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
 
-First, run the development server:
+Ready to build your own AETHER_OS unit? Follow our comprehensive **[Deployment & DIY Guide](DEPLOYMENT.md)** for:
+- Full hardware shopping list and wiring schematics.
+- Supabase database initialization scripts.
+- Firmware configuration and flashing instructions.
+- Dashboard deployment on Vercel.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Quick Start
+1. **Clone**: `git clone https://github.com/your-username/AETHER_OS.git`
+2. **Backend**: Run `supabase_schema.sql` in your Supabase project.
+3. **Configure**: Update `firmware/include/secrets.h` with your credentials.
+4. **Flash**: Upload via PlatformIO.
+5. **Visualize**: Deploy the `dashboard` to see your data live.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Development Environment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
->>>>>>> f8fe43bf4545ef3be0a958e874e77040cd4d1099
+The firmware is built using the PlatformIO ecosystem within VS Code.
+- **Framework**: Arduino
+- **Libraries**: Adafruit SSD1306, Adafruit GFX, ArduinoJson, HTTPClient
+- **Dashboard**: React-based dashboard with custom glassmorphism styling.
