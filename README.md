@@ -33,11 +33,18 @@ Data is pushed to a high-availability Supabase backend via a RESTful API.
 ![UI States Showcase](docs/pics/aether_ui_states_showcase.png)
 
 ### 3. Liquid UI Interface
-Designed for the 0.66" OLED display (64x48 resolution), the UI features several specialized modes:
+Designed for the 0.66" OLED display (64x48 resolution), the UI features a "Liquid" state-machine:
 - **Main Command**: Interactive menu for selecting active modules.
-- **Clock Mode**: High-contrast digital readout with date and day tracking.
-- **Weather Dashboard**: Comprehensive outdoor atmospheric report.
-- **System Telemetry**: Deep-dive into device performance and sync history.
+- **Clock & Weather**: Real-time context powered by NTP and OpenWeatherMap.
+- **WiFi Profile Manager**: Scrollable 5-slot manager with `[*]` primary indicator and long-press locking.
+- **Mechanical Spinner**: Real-time visual feedback for asynchronous networking tasks.
+
+### 4. Deterministic Networking
+The AETHER_OS WiFi stack is engineered for speed and reliability:
+- **Strict Primary Logic**: Deterministic targeting of a manually selected "Primary Slot" for sub-second boot-to-sync times.
+- **Memory-Link (Fast-Track)**: NVS-backed static IP snapshots and BSSID pinning to bypass DHCP handshakes.
+- **Interruptible UX**: Global "Escape Hatch" allows users to abort stalled connection attempts with a single button click.
+- **Verbose Diagnostics**: Real-time status reporting for `NO SIGNAL`, `AUTH FAIL`, and `TIMEOUT` events.
 
 ## Digital Twin Dashboard
 
@@ -49,17 +56,16 @@ The project includes a full-stack Next.js web application that visualizes teleme
 - **Real-Time Visualization**: Instant updates as data flows from the hardware.
 - **Historical Trending**: Interactive charts showing temperature and humidity fluctuations over time.
 - **Responsive Layout**: Optimized for both high-resolution desktop monitors and mobile devices.
-- **Global Context**: Integrated weather and location tracking for comprehensive environmental analysis.
 
 ## Technical Specifications
 
 - **Hardware**: ESP32 Dual-Core MCU (240MHz)
-- **Sensors**: BME280 (Pressure, Temp, Humidity) / AHT20
-- **Display**: 0.66" SSD1306 OLED (I2C)
+- **Sensors**: DHT11 (Temp/Hum), MPU6050 (Motion/Tilt)
+- **Display**: 0.66" SSD1306 OLED (I2C with 16px offset)
+- **Memory Management**: Optimized 12KB Task Stacks to ensure SSL/TLS heap headroom (~40KB+ free).
 - **Backend**: Supabase (PostgreSQL + Edge Functions)
 - **Frontend**: Next.js 14, Tailwind CSS, Framer Motion
-- **Time Sync**: SNTP (sg.pool.ntp.org)
-
+- **Time Sync**: SNTP (pool.ntp.org) with Geo-IP timezone offset.
 ---
 
 ## Getting Started
