@@ -27,6 +27,12 @@ long locOffset = 28800;
 char locCity[16] = "UNKNOWN";
 
 Preferences preferences;
+SemaphoreHandle_t displayMutex;
+
+enum SystemState { SS_MENU, SS_CONNECTING, SS_SCANNING, SS_SYNCING, SS_LOCATING, SS_CLOCK, SS_WEATHER, SS_SLEEPING, SS_STATS, SS_RESET };
+volatile SystemState currentState = SS_MENU;
+String uiLine1 = "", uiLine2 = "", uiLine3 = "";
+const uint8_t* uiIcon = NULL;
 
 // --- Pin Definitions ---
 #define DHTPIN 4
@@ -97,6 +103,55 @@ bool waitWithButtonPoll(unsigned long ms) {
   return false;
 }
 
+void drawPulsingPower(int frame) {
+  int cx = OLED_OFFSET_X + 32;
+  int cy = OLED_OFFSET_Y + 28;
+  float pulse = (sin(frame * 0.2) + 1.0) / 2.0; // 0.0 to 1.0
+  int r = 8 + (int)(pulse * 4);
+  
+  display.drawCircle(cx, cy, r, SSD1306_WHITE);
+  display.fillRect(cx - 3, cy - r - 2, 7, 5, SSD1306_BLACK); // Gap
+  display.drawLine(cx, cy - r + 1, cx, cy - 2, SSD1306_WHITE); // Stem
+}
+
+void uiTask(void *pvParameters) {
+  int frame = 0;
+  const char* loader = "/|-\\";
+  while(1) {
+    if (currentState == SS_CONNECTING || currentState == SS_SYNCING || currentState == SS_LOCATING || currentState == SS_SCANNING) {
+      if (xSemaphoreTake(displayMutex, pdMS_TO_TICKS(50))) {
+        display.clearDisplay();
+        // Header
+        display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
+        display.setTextColor(SSD1306_BLACK);
+        display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
+        
+        String head = "WAITING";
+        if (currentState == SS_CONNECTING) head = "WIFI...";
+        else if (currentState == SS_SYNCING) head = "CLOUD";
+        else if (currentState == SS_LOCATING) head = "GEO-IP";
+        else if (currentState == SS_SCANNING) head = "SCANNING";
+        display.print(head);
+
+        // Classic Mechanical Spinner
+        display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(2);
+        display.setCursor(OLED_OFFSET_X + 26, OLED_OFFSET_Y + 18);
+        display.print(loader[frame % 4]);
+        display.setTextSize(1);
+        
+        display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 40);
+        display.print(uiLine1);
+        
+        display.display();
+        xSemaphoreGive(displayMutex);
+        frame++;
+      }
+    }
+    vTaskDelay(150 / portTICK_PERIOD_MS);
+  }
+}
+
 void sendLog(String msg, String level = "INFO") {
   if (WiFi.status() != WL_CONNECTED) return;
   WiFiClientSecure client; client.setInsecure();
@@ -115,90 +170,92 @@ void sendLog(String msg, String level = "INFO") {
 
 void updateOLED(String header, String line1, String line2, String line3 = "", const uint8_t* icon = NULL) {
   if (!oledFound) return;
-  display.clearDisplay();
-  display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
-  display.setTextColor(SSD1306_BLACK);
-  display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
-  display.print(header);
+  uiLine1 = line1; uiLine2 = line2; uiLine3 = line3; uiIcon = icon;
   
-  if (icon != NULL) {
-    display.drawBitmap(OLED_OFFSET_X + OLED_W - 10, OLED_OFFSET_Y + 1, icon, 8, 8, SSD1306_BLACK);
-  }
+  if (xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+    display.clearDisplay();
+    display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+    display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
+    display.print(header);
+    
+    if (icon != NULL) {
+      display.drawBitmap(OLED_OFFSET_X + OLED_W - 10, OLED_OFFSET_Y + 1, icon, 8, 8, SSD1306_BLACK);
+    }
 
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 14); display.print(line1);
-  display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 24); display.print(line2);
-  if (line3 != "") {
-    display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 34); display.print(line3);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 14); display.print(line1);
+    display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 24); display.print(line2);
+    if (line3 != "") {
+      display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 34); display.print(line3);
+    }
+    display.display();
+    xSemaphoreGive(displayMutex);
   }
-  display.display();
 }
 
 void drawMenu() {
-  display.clearDisplay();
-  display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
-  display.setTextColor(SSD1306_BLACK);
-  String headStr = "";
-  if (locationSynced) headStr += String(locCity).substring(0, 3);
-  else headStr += "LOC";
-  headStr.toUpperCase();
-  display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
-  display.print(headStr);
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    display.drawBitmap(OLED_OFFSET_X + OLED_W - 12, OLED_OFFSET_Y + 1, icon_wifi, 8, 8, SSD1306_BLACK);
-  } else {
-    display.setCursor(OLED_OFFSET_X + OLED_W - 10, OLED_OFFSET_Y + 1);
-    display.print("x");
-  }
-  
-  int startIdx = currentMenuIndex - (VISIBLE_MENU_ITEMS / 2);
-  if (startIdx < 0) startIdx = 0;
-  if (startIdx > TOTAL_MENU_ITEMS - VISIBLE_MENU_ITEMS) startIdx = TOTAL_MENU_ITEMS - VISIBLE_MENU_ITEMS;
-
-  for (int i = 0; i < VISIBLE_MENU_ITEMS; i++) {
-    int itemIdx = startIdx + i;
-    int y = OLED_OFFSET_Y + 14 + (i * 10);
+  if (xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+    display.clearDisplay();
+    display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+    String headStr = "";
+    if (locationSynced) headStr += String(locCity).substring(0, 3);
+    else headStr += "LOC";
+    headStr.toUpperCase();
+    display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
+    display.print(headStr);
     
-    if (itemIdx == currentMenuIndex) {
-      display.fillRect(OLED_OFFSET_X + 2, y - 1, OLED_W - 4, 9, SSD1306_WHITE);
-      display.setTextColor(SSD1306_BLACK);
+    if (WiFi.status() == WL_CONNECTED) {
+      display.drawBitmap(OLED_OFFSET_X + OLED_W - 12, OLED_OFFSET_Y + 1, icon_wifi, 8, 8, SSD1306_BLACK);
     } else {
-      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(OLED_OFFSET_X + OLED_W - 10, OLED_OFFSET_Y + 1);
+      display.print("x");
     }
-    display.setCursor(OLED_OFFSET_X + 4, y);
-    display.print(menuItems[itemIdx]);
+    
+    int startIdx = currentMenuIndex - (VISIBLE_MENU_ITEMS / 2);
+    if (startIdx < 0) startIdx = 0;
+    if (startIdx > TOTAL_MENU_ITEMS - VISIBLE_MENU_ITEMS) startIdx = TOTAL_MENU_ITEMS - VISIBLE_MENU_ITEMS;
+
+    for (int i = 0; i < VISIBLE_MENU_ITEMS; i++) {
+      int itemIdx = startIdx + i;
+      int y = OLED_OFFSET_Y + 14 + (i * 10);
+      
+      if (itemIdx == currentMenuIndex) {
+        display.fillRect(OLED_OFFSET_X + 2, y - 1, OLED_W - 4, 9, SSD1306_WHITE);
+        display.setTextColor(SSD1306_BLACK);
+      } else {
+        display.setTextColor(SSD1306_WHITE);
+      }
+      display.setCursor(OLED_OFFSET_X + 4, y);
+      display.print(menuItems[itemIdx]);
+    }
+    
+    unsigned long elapsed = millis() - lastInteractionTime;
+    int barWidth = map(elapsed, 0, MENU_TIMEOUT, OLED_W - 8, 0);
+    display.fillRect(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 45, barWidth, 2, SSD1306_WHITE);
+    display.display();
+    xSemaphoreGive(displayMutex);
   }
-  
-  unsigned long elapsed = millis() - lastInteractionTime;
-  int barWidth = map(elapsed, 0, MENU_TIMEOUT, OLED_W - 8, 0);
-  display.fillRect(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 45, barWidth, 2, SSD1306_WHITE);
-  display.display();
 }
 
 bool ensureWiFi(bool showConnected = true) {
   if (WiFi.status() == WL_CONNECTED) return true;
-  
-  updateOLED("WIFI", "LINKING", "...");
+  currentState = SS_CONNECTING;
   
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   unsigned long start = millis();
-  int frame = 0;
-  const char* loader = "|/-\\";
-  
-  // Wait up to 20 seconds for slower routers
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    updateOLED("WIFI", "LINKING", String(loader[frame % 4]));
-    frame++;
-    vTaskDelay(250 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
   
+  currentState = SS_MENU;
   if (WiFi.status() == WL_CONNECTED) {
     if (showConnected) {
       updateOLED("WIFI", "CONNECTED", WiFi.localIP().toString());
-      vTaskDelay(800 / portTICK_PERIOD_MS); // Reduced wait
+      vTaskDelay(800 / portTICK_PERIOD_MS); 
     }
     return true;
   }
@@ -210,13 +267,14 @@ bool ensureWiFi(bool showConnected = true) {
 
 void runLocatePage() {
   if (!ensureWiFi()) return;
-  
-  updateOLED("LOCATE", "FETCHING", "IP DATA...", "", icon_pin);
+  currentState = SS_LOCATING;
+  uiLine1 = "FETCHING IP...";
   
   WiFiClient client; HTTPClient http;
   String url = "http://ip-api.com/json/?fields=status,city,lat,lon,offset";
   if (http.begin(client, url)) {
     int code = http.GET();
+    currentState = SS_MENU;
     if (code == 200) {
       JsonDocument doc; deserializeJson(doc, http.getString());
       if (doc["status"] == "success") {
@@ -251,6 +309,7 @@ void runLocatePage() {
     }
     http.end();
   }
+  currentState = SS_MENU;
 }
 
 void showTimePage() {
@@ -261,8 +320,8 @@ void showTimePage() {
   }
 
   if (!ensureWiFi()) return;
-  
-  updateOLED("CLOCK", "SYNCING", "NTP...", "", icon_wifi);
+  currentState = SS_CONNECTING;
+  uiLine1 = "NTP SYNC...";
   
   long tzHours = locOffset / 3600;
   String tzString = "UTC" + String(tzHours > 0 ? "-" : "+") + String(abs(tzHours));
@@ -271,12 +330,11 @@ void showTimePage() {
   
   struct tm tinfo;
   int retries = 0;
-  const char* loader = "|/-\\";
   while (!getLocalTime(&tinfo) && retries < 10) {
-    updateOLED("CLOCK", "SYNCING", String(loader[retries % 4]), "", icon_wifi);
     vTaskDelay(500 / portTICK_PERIOD_MS);
     retries++;
   }
+  currentState = SS_MENU;
   
   unsigned long start = millis();
   String cleanCity = String(locCity);
@@ -303,13 +361,15 @@ void showWeatherPage() {
   }
 
   if (!ensureWiFi()) return;
+  currentState = SS_CONNECTING;
+  uiLine1 = "WEATHER API...";
   
   #ifdef WEATHER_API_KEY
     WiFiClient client; HTTPClient http;
-    // Uses dynamic exact coordinates for precision weather
     String url = "http://api.openweathermap.org/data/2.5/weather?lat=" + String(locLat, 4) + "&lon=" + String(locLon, 4) + "&units=metric&appid=" + String(WEATHER_API_KEY);
     if (http.begin(client, url)) {
       int code = http.GET();
+      currentState = SS_MENU;
       if (code == 200) {
         JsonDocument doc; deserializeJson(doc, http.getString());
         float temp = doc["main"]["temp"].as<float>();
@@ -360,9 +420,11 @@ void runMeasurementFlow(String trigger) {
   }
 
   if (validCount > 0) {
+    uiLine1 = "LINKING...";
     if (!ensureWiFi(true)) return; 
     
-    updateOLED("CLOUD", "SYNCING", "DATA...", "", icon_cloud);
+    currentState = SS_SYNCING;
+    uiLine1 = "SYNCING...";
     
     WiFiClientSecure client; client.setInsecure();
     HTTPClient http;
@@ -394,9 +456,14 @@ void runMeasurementFlow(String trigger) {
         preferences.begin("stats", false);
         preferences.putInt("measures", measureCount);
         preferences.end();
+        
+        currentState = SS_MENU;
+        updateOLED("CLOUD", "SYNCED", "SUCCESS", "SAVED", icon_cloud);
+        vTaskDelay(1500 / portTICK_PERIOD_MS);
       }
       http.end();
     }
+    currentState = SS_MENU;
   } else {
     updateOLED("ERROR", "SENSOR", "FAILED", "NO DATA");
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -422,33 +489,37 @@ void showStatsPage() {
 }
 
 void enterDeepSleep() {
+  currentState = SS_SLEEPING;
   if (oledFound) {
-    for (int i = 0; i <= 10; i++) {
+    if (xSemaphoreTake(displayMutex, portMAX_DELAY)) {
+      for (int i = 0; i <= 10; i++) {
+        display.clearDisplay();
+        
+        // Header
+        display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
+        display.setTextColor(SSD1306_BLACK);
+        display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
+        display.print("SLEEPING...");
+        
+        // Power Icon
+        int cx = OLED_OFFSET_X + 32;
+        int cy = OLED_OFFSET_Y + 28;
+        display.drawCircle(cx, cy, 10, SSD1306_WHITE);
+        display.fillRect(cx - 3, cy - 13, 7, 6, SSD1306_BLACK); 
+        display.drawLine(cx, cy - 11, cx, cy - 2, SSD1306_WHITE); 
+        
+        // Progress Bar
+        int barW = map(i, 0, 10, 0, 40);
+        display.drawRect(OLED_OFFSET_X + 12, OLED_OFFSET_Y + 42, 40, 3, SSD1306_WHITE);
+        display.fillRect(OLED_OFFSET_X + 12, OLED_OFFSET_Y + 42, barW, 3, SSD1306_WHITE);
+        
+        display.display();
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+      }
       display.clearDisplay();
-      
-      // Header
-      display.fillRect(OLED_OFFSET_X, OLED_OFFSET_Y, OLED_W, 10, SSD1306_WHITE);
-      display.setTextColor(SSD1306_BLACK);
-      display.setCursor(OLED_OFFSET_X + 4, OLED_OFFSET_Y + 1);
-      display.print("SLEEPING...");
-      
-      // Power Icon
-      int cx = OLED_OFFSET_X + 32;
-      int cy = OLED_OFFSET_Y + 28;
-      display.drawCircle(cx, cy, 10, SSD1306_WHITE);
-      display.fillRect(cx - 3, cy - 13, 7, 6, SSD1306_BLACK); // Gap
-      display.drawLine(cx, cy - 11, cx, cy - 2, SSD1306_WHITE); // Stem
-      
-      // Progress/Fading Bar
-      int barW = map(i, 0, 10, 0, 40);
-      display.drawRect(OLED_OFFSET_X + 12, OLED_OFFSET_Y + 42, 40, 3, SSD1306_WHITE);
-      display.fillRect(OLED_OFFSET_X + 12, OLED_OFFSET_Y + 42, barW, 3, SSD1306_WHITE);
-      
       display.display();
-      vTaskDelay(150 / portTICK_PERIOD_MS);
+      xSemaphoreGive(displayMutex);
     }
-    display.clearDisplay();
-    display.display();
   }
   
   ledcDetachPin(RED_PIN); ledcDetachPin(GREEN_PIN); ledcDetachPin(BLUE_PIN);
@@ -512,6 +583,7 @@ void monitorTask(void *pvParameters) {
 
 void setup() {
   Serial.begin(115200); Wire.begin(21, 22); pinMode(BUTTON_PIN, INPUT_PULLUP);
+  displayMutex = xSemaphoreCreateMutex();
   
   dht.begin();
   if (mpu.begin()) mpuFound = true;
@@ -519,6 +591,8 @@ void setup() {
   ledcSetup(RED_CH, 5000, 8); ledcAttachPin(RED_PIN, RED_CH);
   ledcSetup(GREEN_CH, 5000, 8); ledcAttachPin(GREEN_PIN, GREEN_CH);
   ledcSetup(BLUE_CH, 5000, 8); ledcAttachPin(BLUE_PIN, BLUE_CH);
-  xTaskCreatePinnedToCore(monitorTask, "Monitor", 16384, NULL, 1, NULL, 1);
+  
+  xTaskCreatePinnedToCore(uiTask, "UI", 4096, NULL, 1, NULL, 0); // Core 0 for Painter
+  xTaskCreatePinnedToCore(monitorTask, "Monitor", 16384, NULL, 1, NULL, 1); // Core 1 for Logic
 }
 void loop() {}
